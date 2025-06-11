@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// CPU信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CpuInfo {
     /// 全局CPU使用率
     pub global_usage: f32,
@@ -16,7 +16,7 @@ pub struct CpuInfo {
 }
 
 /// CPU核心信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CpuCoreInfo {
     /// 核心名称
     pub name: String,
@@ -27,7 +27,7 @@ pub struct CpuCoreInfo {
 }
 
 /// 内存信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct MemoryInfo {
     /// 总内存 (bytes)
     pub total: u64,
@@ -42,7 +42,7 @@ pub struct MemoryInfo {
 }
 
 /// 磁盘信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DiskInfo {
     /// 磁盘名称
     pub name: String,
@@ -76,7 +76,7 @@ pub struct ProcessInfo {
 }
 
 /// 系统基本信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SystemInfo {
     /// 操作系统名称
     pub os_name: String,

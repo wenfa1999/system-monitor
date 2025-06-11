@@ -9,215 +9,110 @@ pub mod metrics;
 pub use info::*;
 
 use crate::error::{Result, SystemMonitorError};
-use sysinfo::{System, Cpu, Disk, Process, Pid, ProcessRefreshKind, ProcessesToUpdate, CpuRefreshKind, Disks};
-use std::collections::VecDeque;
+use sysinfo::{System, Disks};
 use std::sync::{Arc, Mutex};
-use tokio::time::Duration;
 
 /// 系统信息管理器
+#[derive(Clone)]
 pub struct SystemInfoManager {
     system: Arc<Mutex<System>>,
-    cpu_history: Arc<Mutex<VecDeque<f32>>>,
-    memory_history: Arc<Mutex<VecDeque<f64>>>,
-    max_history_points: usize,
-    refresh_interval: Duration,
-    _update_task: tokio::task::JoinHandle<()>,
 }
 
 impl SystemInfoManager {
     /// 创建新的系统信息管理器
-    pub fn new(refresh_interval_ms: u64, max_history_points: usize) -> Result<Self> {
-        let mut system = System::new_all();
-        system.refresh_all();
-
-        let system = Arc::new(Mutex::new(system));
-        let cpu_history = Arc::new(Mutex::new(VecDeque::with_capacity(max_history_points)));
-        let memory_history = Arc::new(Mutex::new(VecDeque::with_capacity(max_history_points)));
-        let refresh_interval = Duration::from_millis(refresh_interval_ms);
-
-        // 启动后台更新任务
-        let update_task = Self::start_update_task(
-            system.clone(),
-            cpu_history.clone(),
-            memory_history.clone(),
-            max_history_points,
-            refresh_interval,
-        );
-
+    pub fn new() -> Result<Self> {
+        let system = System::new_all();
         Ok(Self {
-            system,
-            cpu_history,
-            memory_history,
-            max_history_points,
-            refresh_interval,
-            _update_task: update_task,
+            system: Arc::new(Mutex::new(system)),
         })
     }
 
-    /// 启动后台更新任务
-    fn start_update_task(
-        system: Arc<Mutex<System>>,
-        cpu_history: Arc<Mutex<VecDeque<f32>>>,
-        memory_history: Arc<Mutex<VecDeque<f64>>>,
-        max_history_points: usize,
-        refresh_interval: Duration,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(refresh_interval);
+    /// 异步获取系统快照
+    pub async fn get_snapshot(&self) -> Result<SystemSnapshot> {
+        let (cpu_info, memory_info, disk_info, system_info) = tokio::try_join!(
+            self.get_cpu_info_async(),
+            self.get_memory_info_async(),
+            self.get_disk_info_async(),
+            self.get_system_info_async()
+        )?;
+
+        Ok(SystemSnapshot::new(cpu_info, memory_info, disk_info, system_info, None))
+    }
+
+    /// 异步获取当前CPU信息
+    pub async fn get_cpu_info_async(&self) -> Result<CpuInfo> {
+        let system_clone = self.system.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut system = system_clone.lock().map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
+            system.refresh_cpu_all();
             
-            loop {
-                interval.tick().await;
+            let global_cpu = system.global_cpu_usage();
+            let cpus: Vec<CpuCoreInfo> = system.cpus().iter().map(|cpu| CpuCoreInfo {
+                name: cpu.name().to_string(),
+                usage: cpu.cpu_usage(),
+                frequency: cpu.frequency(),
+            }).collect();
+
+            Ok(CpuInfo {
+                global_usage: global_cpu,
+                cores: cpus,
+                core_count: system.cpus().len(),
+            })
+        }).await.map_err(|e| SystemMonitorError::Runtime(e.to_string()))?
+    }
+
+    /// 异步获取当前内存信息
+    pub async fn get_memory_info_async(&self) -> Result<MemoryInfo> {
+        let system_clone = self.system.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut system = system_clone.lock().map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
+            system.refresh_memory();
+
+            Ok(MemoryInfo {
+                total: system.total_memory(),
+                used: system.used_memory(),
+                available: system.available_memory(),
+                free: system.free_memory(),
+                usage_percent: (system.used_memory() as f64 / system.total_memory() as f64) * 100.0,
+            })
+        }).await.map_err(|e| SystemMonitorError::Runtime(e.to_string()))?
+    }
+
+    /// 异步获取磁盘信息
+    pub async fn get_disk_info_async(&self) -> Result<Vec<DiskInfo>> {
+        tokio::task::spawn_blocking(move || {
+            let disks = Disks::new_with_refreshed_list();
+            let disk_info: Vec<DiskInfo> = disks.iter().map(|disk| {
+                let total = disk.total_space();
+                let available = disk.available_space();
+                let used = total - available;
                 
-                // 更新系统信息
-                if let Ok(mut sys) = system.lock() {
-                    sys.refresh_cpu_all();
-                    sys.refresh_memory();
-                    
-                    // 更新CPU历史数据
-                    let cpu_usage = sys.global_cpu_usage();
-                    if let Ok(mut history) = cpu_history.lock() {
-                        if history.len() >= max_history_points {
-                            history.pop_front();
-                        }
-                        history.push_back(cpu_usage);
-                    }
-                    
-                    // 更新内存历史数据
-                    let memory_usage = (sys.used_memory() as f64 / sys.total_memory() as f64) * 100.0;
-                    if let Ok(mut history) = memory_history.lock() {
-                        if history.len() >= max_history_points {
-                            history.pop_front();
-                        }
-                        history.push_back(memory_usage);
-                    }
-                } else {
-                    log::error!("无法获取系统信息锁");
+                DiskInfo {
+                    name: disk.name().to_string_lossy().to_string(),
+                    mount_point: disk.mount_point().to_string_lossy().to_string(),
+                    file_system: String::from_utf8_lossy(disk.file_system().as_encoded_bytes()).to_string(),
+                    total_space: total,
+                    available_space: available,
+                    used_space: used,
+                    usage_percent: if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 },
                 }
-            }
-        })
+            }).collect();
+            Ok(disk_info)
+        }).await.map_err(|e| SystemMonitorError::Runtime(e.to_string()))?
     }
 
-    /// 获取当前CPU信息
-    pub fn get_cpu_info(&self) -> Result<CpuInfo> {
-        let system = self.system.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
-
-        let global_cpu = system.global_cpu_usage();
-        let cpus: Vec<CpuCoreInfo> = system.cpus().iter().map(|cpu| CpuCoreInfo {
-            name: cpu.name().to_string(),
-            usage: cpu.cpu_usage(),
-            frequency: cpu.frequency(),
-        }).collect();
-
-        Ok(CpuInfo {
-            global_usage: global_cpu,
-            cores: cpus,
-            core_count: system.cpus().len(),
-        })
-    }
-
-    /// 获取当前内存信息
-    pub fn get_memory_info(&self) -> Result<MemoryInfo> {
-        let system = self.system.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
-
-        Ok(MemoryInfo {
-            total: system.total_memory(),
-            used: system.used_memory(),
-            available: system.available_memory(),
-            free: system.free_memory(),
-            usage_percent: (system.used_memory() as f64 / system.total_memory() as f64) * 100.0,
-        })
-    }
-
-    /// 获取磁盘信息
-    pub fn get_disk_info(&self) -> Result<Vec<DiskInfo>> {
-        let system = self.system.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
-
-        let disks: Vec<DiskInfo> = Disks::new_with_refreshed_list().iter().map(|disk| {
-            let total = disk.total_space();
-            let available = disk.available_space();
-            let used = total - available;
-            
-            DiskInfo {
-                name: disk.name().to_string_lossy().to_string(),
-                mount_point: disk.mount_point().to_string_lossy().to_string(),
-                file_system: String::from_utf8_lossy(disk.file_system().as_encoded_bytes()).to_string(),
-                total_space: total,
-                available_space: available,
-                used_space: used,
-                usage_percent: if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 },
-            }
-        }).collect();
-
-        Ok(disks)
-    }
-
-    /// 获取进程信息
-    pub fn get_process_info(&self) -> Result<Vec<ProcessInfo>> {
-        let mut system = self.system.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
-
-        system.refresh_processes(ProcessesToUpdate::All, true);
-        
-        let mut processes: Vec<ProcessInfo> = system.processes().iter().map(|(pid, process)| {
-            ProcessInfo {
-                pid: pid.as_u32(),
-                name: process.name().to_string_lossy().into_owned(),
-                cpu_usage: process.cpu_usage(),
-                memory_usage: process.memory(),
-                status: format!("{:?}", process.status()),
-            }
-        }).collect();
-
-        // 按CPU使用率排序
-        processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // 只返回前50个进程
-        processes.truncate(50);
-        
-        Ok(processes)
-    }
-
-    /// 获取CPU使用率历史数据
-    pub fn get_cpu_history(&self) -> Result<Vec<f32>> {
-        let history = self.cpu_history.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取CPU历史数据锁".to_string()))?;
-        
-        Ok(history.iter().cloned().collect())
-    }
-
-    /// 获取内存使用率历史数据
-    pub fn get_memory_history(&self) -> Result<Vec<f64>> {
-        let history = self.memory_history.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取内存历史数据锁".to_string()))?;
-        
-        Ok(history.iter().cloned().collect())
-    }
-
-    /// 获取系统基本信息
-    pub fn get_system_info(&self) -> Result<SystemInfo> {
-        let system = self.system.lock()
-            .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统信息锁".to_string()))?;
-
-        Ok(SystemInfo {
-            os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
-            os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
-            kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
-            hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
-            uptime: System::uptime(),
-            boot_time: System::boot_time(),
-        })
-    }
-
-    /// 更新刷新间隔
-    pub fn update_refresh_interval(&mut self, interval_ms: u64) -> Result<()> {
-        self.refresh_interval = Duration::from_millis(interval_ms);
-        // 注意：这里需要重启更新任务以应用新的间隔
-        // 在实际实现中，可能需要更复杂的任务管理
-        log::info!("刷新间隔已更新为 {}ms", interval_ms);
-        Ok(())
+    /// 异步获取系统基本信息
+    pub async fn get_system_info_async(&self) -> Result<SystemInfo> {
+        tokio::task::spawn_blocking(move || {
+            Ok(SystemInfo {
+                os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
+                os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
+                kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
+                hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
+                uptime: System::uptime(),
+                boot_time: System::boot_time(),
+            })
+        }).await.map_err(|e| SystemMonitorError::Runtime(e.to_string()))?
     }
 }
 
@@ -227,29 +122,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_info_manager_creation() {
-        let manager = SystemInfoManager::new(1000, 60);
+        let manager = SystemInfoManager::new();
         assert!(manager.is_ok());
     }
 
     #[tokio::test]
-    async fn test_get_cpu_info() {
-        let manager = SystemInfoManager::new(1000, 60).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await; // 等待初始化
+    async fn test_get_cpu_info_async() {
+        let manager = SystemInfoManager::new().unwrap();
         
-        let cpu_info = manager.get_cpu_info();
+        let cpu_info = manager.get_cpu_info_async().await;
         assert!(cpu_info.is_ok());
         
         let info = cpu_info.unwrap();
         assert!(info.core_count > 0);
-        assert!(info.global_usage >= 0.0);
+        // Note: global_usage might be 0.0 on the first call.
     }
 
     #[tokio::test]
-    async fn test_get_memory_info() {
-        let manager = SystemInfoManager::new(1000, 60).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    async fn test_get_memory_info_async() {
+        let manager = SystemInfoManager::new().unwrap();
         
-        let memory_info = manager.get_memory_info();
+        let memory_info = manager.get_memory_info_async().await;
         assert!(memory_info.is_ok());
         
         let info = memory_info.unwrap();

@@ -5,10 +5,12 @@
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::system::SystemSnapshot;
+use crate::app::{AppMessage, AppState};
 use crate::ui::{TabType, UiState, UiTheme, ColorScheme, MemoryTabRenderer, DiskTabRenderer, ProcessTabRenderer, NetworkTabRenderer};
 use eframe::egui;
 use std::sync::Arc;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 /// UI管理器
 pub struct UiManager {
@@ -94,34 +96,44 @@ impl UiManager {
     }
     
     /// 渲染主界面
-    pub fn render(&mut self, ctx: &egui::Context, app_state: &crate::app::AppState) {
+    pub fn render(&mut self, ctx: &egui::Context, app_state: &mut AppState, sender: &mpsc::UnboundedSender<AppMessage>) {
         // 渲染顶部菜单栏
-        self.render_menu_bar(ctx);
+        self.render_menu_bar(ctx, app_state, sender);
         
         // 渲染侧边栏
         if self.state.show_sidebar {
-            self.render_sidebar(ctx);
+            self.render_sidebar(ctx, sender);
         }
         
         // 渲染主内容区域
-        self.render_main_content(ctx);
+        self.render_main_content(ctx, sender);
         
         // 渲染状态栏
         self.render_status_bar(ctx, app_state);
+
+        // 根据状态渲染设置窗口
+        if app_state.show_settings {
+            self.render_settings_window(ctx, app_state, sender);
+        }
+
+        // 根据状态渲染关于窗口
+        if app_state.show_about {
+            self.render_about_window(ctx, app_state);
+        }
     }
     
     /// 渲染菜单栏
-    fn render_menu_bar(&mut self, ctx: &egui::Context) {
+    fn render_menu_bar(&mut self, ctx: &egui::Context, _app_state: &mut AppState, sender: &mpsc::UnboundedSender<AppMessage>) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("文件", |ui| {
                     if ui.button("设置").clicked() {
-                        // 发送显示设置消息
+                        let _ = sender.send(AppMessage::ShowSettings);
                         ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("退出").clicked() {
-                        // 发送退出消息
+                        let _ = sender.send(AppMessage::Exit);
                         ui.close_menu();
                     }
                 });
@@ -150,7 +162,7 @@ impl UiManager {
                 
                 ui.menu_button("帮助", |ui| {
                     if ui.button("关于").clicked() {
-                        // 发送显示关于消息
+                        let _ = sender.send(AppMessage::ShowAbout);
                         ui.close_menu();
                     }
                 });
@@ -174,7 +186,7 @@ impl UiManager {
     }
     
     /// 渲染侧边栏
-    fn render_sidebar(&mut self, ctx: &egui::Context) {
+    fn render_sidebar(&mut self, ctx: &egui::Context, sender: &mpsc::UnboundedSender<AppMessage>) {
         egui::SidePanel::left("sidebar")
             .default_width(self.state.sidebar_width)
             .width_range(150.0..=300.0)
@@ -191,7 +203,7 @@ impl UiManager {
                     
                     ui.add_enabled_ui(is_enabled, |ui| {
                         if ui.selectable_label(is_active, tab_type.name()).clicked() {
-                            self.state.active_tab = tab_type;
+                            let _ = sender.send(AppMessage::SwitchTab(tab_type));
                         }
                     });
                 }
@@ -217,7 +229,7 @@ impl UiManager {
     }
     
     /// 渲染主内容区域
-    fn render_main_content(&mut self, ctx: &egui::Context) {
+    fn render_main_content(&mut self, ctx: &egui::Context, _sender: &mpsc::UnboundedSender<AppMessage>) {
         egui::CentralPanel::default().show(ctx, |ui| {
             // 渲染标签页标题
             ui.horizontal(|ui| {
@@ -226,7 +238,7 @@ impl UiManager {
                 // 右对齐的刷新按钮
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("🔄 刷新").clicked() {
-                        // 发送刷新消息
+                        // 发送刷新消息 - 这将在异步重构中更有用
                     }
                 });
             });
@@ -271,6 +283,128 @@ impl UiManager {
                 });
             });
         });
+    }
+    /// 渲染设置窗口
+    fn render_settings_window(&mut self, ctx: &egui::Context, app_state: &mut AppState, sender: &mpsc::UnboundedSender<AppMessage>) {
+        let mut open = app_state.show_settings;
+        egui::Window::new("设置")
+            .open(&mut open)
+            .default_width(400.0)
+            .default_height(300.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("应用程序设置");
+                ui.separator();
+                
+                let mut config = self.config.as_ref().clone();
+                let mut changed = false;
+
+                // 监控设置
+                ui.collapsing("监控设置", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("刷新间隔 (毫秒):");
+                        if ui.add(egui::Slider::new(&mut config.monitoring.refresh_interval_ms, 100..=5000)).changed() {
+                            changed = true;
+                        }
+                    });
+                    
+                    if ui.checkbox(&mut config.monitoring.enable_cpu_monitoring, "启用CPU监控").changed() {
+                        changed = true;
+                    }
+                    
+                    if ui.checkbox(&mut config.monitoring.enable_memory_monitoring, "启用内存监控").changed() {
+                        changed = true;
+                    }
+                    
+                    if ui.checkbox(&mut config.monitoring.enable_disk_monitoring, "启用磁盘监控").changed() {
+                        changed = true;
+                    }
+                });
+                
+                // UI设置
+                ui.collapsing("界面设置", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("字体大小:");
+                        if ui.add(egui::Slider::new(&mut config.ui.font_size, 8.0..=24.0)).changed() {
+                            changed = true;
+                        }
+                    });
+                    
+                    if ui.checkbox(&mut config.ui.show_grid, "显示网格").changed() {
+                        changed = true;
+                    }
+                });
+
+                if changed {
+                    // 发送消息而不是直接调用 config_manager
+                    let _ = sender.send(AppMessage::ApplyConfig(config));
+                }
+                
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("关闭").clicked() {
+                        app_state.show_settings = false;
+                    }
+                    
+                    if ui.button("重置为默认").clicked() {
+                        let _ = sender.send(AppMessage::ApplyConfig(AppConfig::default()));
+                    }
+                });
+            });
+        
+        if !open {
+            app_state.show_settings = false;
+        }
+    }
+    
+    /// 渲染关于窗口
+    fn render_about_window(&mut self, ctx: &egui::Context, app_state: &mut AppState) {
+        let mut open = app_state.show_about;
+        egui::Window::new("关于")
+            .open(&mut open)
+            .default_width(350.0)
+            .default_height(250.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading("系统监控工具");
+                    ui.label("版本 0.1.0");
+                    ui.separator();
+                    
+                    ui.label("基于Rust和egui构建的实时系统监控工具");
+                    ui.label("提供CPU、内存、磁盘等系统信息的实时监控");
+                    
+                    ui.separator();
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("运行时间:");
+                        ui.label(format!("{:.1}秒", app_state.start_time.elapsed().as_secs_f32()));
+                    });
+                    
+                    if let Some(ref snapshot) = self.system_data {
+                        ui.horizontal(|ui| {
+                            ui.label("系统状态:");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(
+                                    (snapshot.get_health_status().color()[0] * 255.0) as u8,
+                                    (snapshot.get_health_status().color()[1] * 255.0) as u8,
+                                    (snapshot.get_health_status().color()[2] * 255.0) as u8,
+                                ),
+                                snapshot.get_health_status().description()
+                            );
+                        });
+                    }
+                    
+                    ui.separator();
+                    
+                    if ui.button("关闭").clicked() {
+                        app_state.show_about = false;
+                    }
+                });
+            });
+        if !open {
+            app_state.show_about = false;
+        }
     }
 }
 

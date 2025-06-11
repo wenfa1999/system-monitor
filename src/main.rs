@@ -54,9 +54,16 @@ async fn main() -> Result<(), SystemMonitorError> {
         "系统监控工具",
         options,
         Box::new(|cc: &eframe::CreationContext| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
-            // 设置自定义字体（支持中文）
-            setup_custom_fonts(&cc.egui_ctx);
-            
+            // 在创建 app 之前设置字体
+            if let Err(e) = setup_custom_fonts(&cc.egui_ctx, &config) {
+                // 字体初始化失败是一个致命错误
+                error!("字体初始化失败: {}", e);
+                // 在UI中显示一个致命错误，因为没有字体无法继续
+                // 这里可以创建一个临时的错误显示应用
+                // 为简单起见，我们直接恐慌
+                panic!("字体初始化失败: {}", e);
+            }
+
             // 创建应用程序实例
             match SystemMonitorApp::new(cc, Arc::new(config)) {
                 Ok(app) => Ok(Box::new(app)),
@@ -88,56 +95,57 @@ fn load_icon() -> egui::IconData {
 }
 
 /// 设置自定义字体以支持中文显示
-fn setup_custom_fonts(ctx: &egui::Context) {
+fn setup_custom_fonts(ctx: &egui::Context, config: &AppConfig) -> Result<(), String> {
     let mut fonts = egui::FontDefinitions::default();
-    
-    // 尝试加载自定义字体，如果失败则使用系统字体
-    let font_data = match std::fs::read("assets/fonts/NotoSansSC-Regular.ttf") {
-        Ok(data) => {
-            log::info!("成功加载自定义中文字体");
-            egui::FontData::from_owned(data)
+    let mut font_loaded = false;
+
+    // 1. 尝试从配置中加载字体
+    if let Some(path) = &config.ui.font_path {
+        if let Ok(font_data) = std::fs::read(path) {
+            log::info!("从配置路径加载字体: {}", path);
+            fonts.font_data.insert("custom_font".to_owned(), Arc::new(egui::FontData::from_owned(font_data)));
+            set_font_families(&mut fonts, "custom_font");
+            font_loaded = true;
+        } else {
+            log::warn!("无法从配置路径加载字体: {}", path);
         }
-        Err(_) => {
-            log::warn!("未找到自定义字体文件，尝试使用系统字体");
-            // 尝试使用Windows系统自带的微软雅黑字体
-            match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
-                Ok(data) => {
-                    log::info!("使用系统微软雅黑字体");
-                    egui::FontData::from_owned(data)
-                }
-                Err(_) => {
-                    // 如果系统字体也找不到，尝试其他常见中文字体
-                    match std::fs::read("C:/Windows/Fonts/simsun.ttc") {
-                        Ok(data) => {
-                            log::info!("使用系统宋体字体");
-                            egui::FontData::from_owned(data)
-                        }
-                        Err(_) => {
-                            log::warn!("无法找到合适的中文字体，使用默认字体");
-                            return; // 使用默认字体
-                        }
-                    }
-                }
+    }
+
+    // 2. 如果失败，尝试后备系统字体
+    if !font_loaded {
+        let system_fonts = ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simsun.ttc"];
+        for path in system_fonts {
+            if let Ok(font_data) = std::fs::read(path) {
+                log::info!("加载后备系统字体: {}", path);
+                fonts.font_data.insert("fallback_font".to_owned(), Arc::new(egui::FontData::from_owned(font_data)));
+                set_font_families(&mut fonts, "fallback_font");
+                font_loaded = true;
+                break;
             }
         }
-    };
+    }
 
-    // 添加中文字体支持
-    fonts.font_data.insert("chinese_font".to_owned(), Arc::new(font_data));
+    ctx.set_fonts(fonts);
 
-    // 设置字体优先级 - 将中文字体放在最前面
+    if !font_loaded {
+        return Err("无法加载任何有效的中文字体。请检查配置文件中的 `font_path` 或确保系统字体可用。".to_string());
+    }
+
+    log::info!("字体设置完成");
+    Ok(())
+}
+
+/// 辅助函数，用于设置字体族
+fn set_font_families(fonts: &mut egui::FontDefinitions, font_name: &str) {
     fonts
         .families
         .entry(egui::FontFamily::Proportional)
         .or_default()
-        .insert(0, "chinese_font".to_owned());
+        .insert(0, font_name.to_owned());
 
     fonts
         .families
         .entry(egui::FontFamily::Monospace)
         .or_default()
-        .push("chinese_font".to_owned());
-
-    ctx.set_fonts(fonts);
-    log::info!("字体设置完成");
+        .push(font_name.to_owned());
 }

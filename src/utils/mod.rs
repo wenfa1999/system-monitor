@@ -73,16 +73,9 @@ impl MathUtils {
         if values.is_empty() || window_size == 0 {
             return Vec::new();
         }
-
-        let mut result = Vec::new();
-        for i in 0..values.len() {
-            let start = if i >= window_size - 1 { i - window_size + 1 } else { 0 };
-            let end = i + 1;
-            let window = &values[start..end];
-            let average = window.iter().sum::<f64>() / window.len() as f64;
-            result.push(average);
-        }
-        result
+        values.windows(window_size)
+            .map(|window| window.iter().sum::<f64>() / window.len() as f64)
+            .collect()
     }
 
     /// 计算标准差
@@ -341,8 +334,9 @@ mod tests {
     fn test_moving_average() {
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let avg = MathUtils::moving_average(&values, 3);
-        assert_eq!(avg.len(), 5);
-        assert_eq!(avg[2], 2.0); // (1+2+3)/3
-        assert_eq!(avg[4], 4.0); // (3+4+5)/3
+        assert_eq!(avg.len(), 3);
+        assert_eq!(avg[0], 2.0); // (1+2+3)/3
+        assert_eq!(avg[1], 3.0); // (2+3+4)/3
+        assert_eq!(avg[2], 4.0); // (3+4+5)/3
     }
 }

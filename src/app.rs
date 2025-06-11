@@ -29,6 +29,8 @@ pub struct SystemMonitorApp {
     message_sender: Option<mpsc::UnboundedSender<AppMessage>>,
     /// 消息通道接收端
     message_receiver: Option<mpsc::UnboundedReceiver<AppMessage>>,
+    /// 用于取消后台任务的令牌
+    cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 /// 应用程序状态
@@ -63,6 +65,8 @@ pub enum AppMessage {
     Error(String),
     /// 切换标签页
     SwitchTab(TabType),
+    /// 应用配置
+    ApplyConfig(AppConfig),
     /// 显示设置
     ShowSettings,
     /// 隐藏设置
@@ -117,23 +121,22 @@ impl SystemMonitorApp {
             last_update: Instant::now(),
             message_sender: Some(message_sender),
             message_receiver: Some(message_receiver),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         };
         
         // 初始化系统信息管理器
         app.initialize_system_manager()?;
         
+        // 启动后台数据采集任务
+        app.start_background_collector();
+
         log::info!("系统监控应用程序初始化完成");
         Ok(app)
     }
     
     /// 初始化系统信息管理器
     fn initialize_system_manager(&mut self) -> Result<()> {
-        let config = self.config_manager.get();
-        
-        match SystemInfoManager::new(
-            config.monitoring.refresh_interval_ms,
-            config.monitoring.cpu_history_points,
-        ) {
+        match SystemInfoManager::new() {
             Ok(manager) => {
                 self.system_manager = Some(manager);
                 log::info!("系统信息管理器初始化成功");
@@ -170,6 +173,13 @@ impl SystemMonitorApp {
                 self.app_state.active_tab = tab;
                 self.ui_manager.set_active_tab(tab);
             }
+            AppMessage::ApplyConfig(new_config) => {
+                if let Err(e) = self.config_manager.update(|cfg| *cfg = new_config) {
+                    log::error!("更新配置失败: {}", e);
+                } else if let Some(ref sender) = self.message_sender {
+                    let _ = sender.send(AppMessage::ConfigUpdate);
+                }
+            }
             AppMessage::ShowSettings => {
                 self.app_state.show_settings = true;
             }
@@ -204,46 +214,38 @@ impl SystemMonitorApp {
         Ok(())
     }
     
-    /// 更新系统信息
-    fn update_system_info(&mut self) -> Result<()> {
-        if let Some(ref system_manager) = self.system_manager {
-            // 获取系统快照
-            let cpu_info = system_manager.get_cpu_info()?;
-            let memory_info = system_manager.get_memory_info()?;
-            let disk_info = system_manager.get_disk_info()?;
-            let system_info = system_manager.get_system_info()?;
-            
-            // 创建系统快照
-            let snapshot = SystemSnapshot::new(
-                cpu_info,
-                memory_info,
-                disk_info,
-                system_info,
-                None, // 网络信息暂时为空
-            );
-            
-            // 发送更新消息
-            if let Some(ref sender) = self.message_sender {
-                let _ = sender.send(AppMessage::SystemUpdate(snapshot));
-            }
-        }
-        
-        Ok(())
-    }
-    
-    /// 处理定时更新
-    fn handle_periodic_update(&mut self) {
-        let config = self.config_manager.get();
-        let update_interval = Duration::from_millis(config.monitoring.refresh_interval_ms);
-        
-        if self.last_update.elapsed() >= update_interval {
-            if let Err(e) = self.update_system_info() {
-                log::error!("更新系统信息失败: {}", e);
-                if let Some(ref sender) = self.message_sender {
-                    let _ = sender.send(AppMessage::Error(format!("系统信息更新失败: {}", e)));
+    /// 启动后台数据采集任务
+    fn start_background_collector(&mut self) {
+        if let (Some(system_manager), Some(sender)) = (self.system_manager.as_ref(), self.message_sender.as_ref()) {
+            let system_manager = system_manager.clone();
+            let sender = sender.clone();
+            let config = self.config_manager.get().clone();
+            let token = self.cancellation_token.clone();
+
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(config.monitoring.refresh_interval_ms));
+                loop {
+                    tokio::select! {
+                        _ = token.cancelled() => {
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            match system_manager.get_snapshot().await {
+                                Ok(snapshot) => {
+                                    if sender.send(AppMessage::SystemUpdate(snapshot)).is_err() {
+                                        break; // Channel closed
+                                    }
+                                },
+                                Err(e) => {
+                                    if sender.send(AppMessage::Error(format!("数据采集失败: {}", e))).is_err() {
+                                        break; // Channel closed
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            self.last_update = Instant::now();
+            });
         }
     }
     
@@ -261,159 +263,18 @@ impl SystemMonitorApp {
         }
     }
     
-    /// 渲染设置窗口
-    fn render_settings_window(&mut self, ctx: &egui::Context) {
-        if !self.app_state.show_settings {
-            return;
-        }
-        
-        egui::Window::new("设置")
-            .default_width(400.0)
-            .default_height(300.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.heading("应用程序设置");
-                ui.separator();
-                
-                // 监控设置
-                ui.collapsing("监控设置", |ui| {
-                    let mut config = self.config_manager.get().clone();
-                    let mut changed = false;
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("刷新间隔 (毫秒):");
-                        if ui.add(egui::Slider::new(&mut config.monitoring.refresh_interval_ms, 100..=5000)).changed() {
-                            changed = true;
-                        }
-                    });
-                    
-                    if ui.checkbox(&mut config.monitoring.enable_cpu_monitoring, "启用CPU监控").changed() {
-                        changed = true;
-                    }
-                    
-                    if ui.checkbox(&mut config.monitoring.enable_memory_monitoring, "启用内存监控").changed() {
-                        changed = true;
-                    }
-                    
-                    if ui.checkbox(&mut config.monitoring.enable_disk_monitoring, "启用磁盘监控").changed() {
-                        changed = true;
-                    }
-                    
-                    if changed {
-                        if let Err(e) = self.config_manager.update(|cfg| *cfg = config) {
-                            log::error!("更新配置失败: {}", e);
-                        } else if let Some(ref sender) = self.message_sender {
-                            let _ = sender.send(AppMessage::ConfigUpdate);
-                        }
-                    }
-                });
-                
-                // UI设置
-                ui.collapsing("界面设置", |ui| {
-                    let mut config = self.config_manager.get().clone();
-                    let mut changed = false;
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("字体大小:");
-                        if ui.add(egui::Slider::new(&mut config.ui.font_size, 8.0..=24.0)).changed() {
-                            changed = true;
-                        }
-                    });
-                    
-                    if ui.checkbox(&mut config.ui.show_grid, "显示网格").changed() {
-                        changed = true;
-                    }
-                    
-                    if changed {
-                        if let Err(e) = self.config_manager.update(|cfg| *cfg = config) {
-                            log::error!("更新配置失败: {}", e);
-                        }
-                    }
-                });
-                
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("关闭").clicked() {
-                        self.app_state.show_settings = false;
-                    }
-                    
-                    if ui.button("重置为默认").clicked() {
-                        if let Err(e) = self.config_manager.update(|cfg| cfg.reset_to_default()) {
-                            log::error!("重置配置失败: {}", e);
-                        } else if let Some(ref sender) = self.message_sender {
-                            let _ = sender.send(AppMessage::ConfigUpdate);
-                        }
-                    }
-                });
-            });
-    }
-    
-    /// 渲染关于窗口
-    fn render_about_window(&mut self, ctx: &egui::Context) {
-        if !self.app_state.show_about {
-            return;
-        }
-        
-        egui::Window::new("关于")
-            .default_width(350.0)
-            .default_height(250.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("系统监控工具");
-                    ui.label("版本 0.1.0");
-                    ui.separator();
-                    
-                    ui.label("基于Rust和egui构建的实时系统监控工具");
-                    ui.label("提供CPU、内存、磁盘等系统信息的实时监控");
-                    
-                    ui.separator();
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("运行时间:");
-                        ui.label(format!("{:.1}秒", self.app_state.start_time.elapsed().as_secs_f32()));
-                    });
-                    
-                    if let Some(ref snapshot) = self.app_state.current_snapshot {
-                        ui.horizontal(|ui| {
-                            ui.label("系统状态:");
-                            ui.colored_label(
-                                egui::Color32::from_rgb(
-                                    (snapshot.get_health_status().color()[0] * 255.0) as u8,
-                                    (snapshot.get_health_status().color()[1] * 255.0) as u8,
-                                    (snapshot.get_health_status().color()[2] * 255.0) as u8,
-                                ),
-                                snapshot.get_health_status().description()
-                            );
-                        });
-                    }
-                    
-                    ui.separator();
-                    
-                    if ui.button("关闭").clicked() {
-                        self.app_state.show_about = false;
-                    }
-                });
-            });
-    }
 }
 
 impl eframe::App for SystemMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 处理定时更新
-        self.handle_periodic_update();
-        
-        // 处理消息队列
+        // 不再调用 self.handle_periodic_update();
         self.process_messages();
         
-        // 渲染主界面
-        self.ui_manager.render(ctx, &self.app_state);
-        
-        // 渲染设置窗口
-        self.render_settings_window(ctx);
-        
-        // 渲染关于窗口
-        self.render_about_window(ctx);
+        // 将 AppState 和 message_sender 传递给 UiManager
+        // UiManager 现在负责所有渲染
+        if let Some(sender) = &self.message_sender {
+            self.ui_manager.render(ctx, &mut self.app_state, sender);
+        }
     }
     
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
@@ -421,5 +282,90 @@ impl eframe::App for SystemMonitorApp {
         if let Err(e) = self.config_manager.save() {
             log::error!("保存配置失败: {}", e);
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.cancellation_token.cancel();
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::system::info::{CpuInfo, MemoryInfo, DiskInfo, SystemInfo};
+    use std::sync::Arc;
+
+    // Helper function to create a default AppState for testing
+    fn default_app_state() -> AppState {
+        AppState::default()
+    }
+
+    // Helper function to create a dummy SystemMonitorApp for testing handle_message
+    fn test_app() -> SystemMonitorApp {
+        let (tx, rx) = mpsc::unbounded_channel();
+        SystemMonitorApp {
+            config_manager: ConfigManager::new(false).unwrap(),
+            system_manager: None,
+            ui_manager: UiManager::new(&egui::Context::default(), Arc::new(AppConfig::default())).unwrap(),
+            error_recovery: ErrorRecovery::default(),
+            app_state: default_app_state(),
+            last_update: Instant::now(),
+            message_sender: Some(tx),
+            message_receiver: Some(rx),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    #[test]
+    fn test_handle_message_system_update() {
+        let mut app = test_app();
+        let snapshot = SystemSnapshot::new(
+            CpuInfo::default(),
+            MemoryInfo::default(),
+            vec![DiskInfo::default()],
+            SystemInfo::default(),
+            None,
+        );
+        let message = AppMessage::SystemUpdate(snapshot.clone());
+        app.handle_message(message);
+
+        assert!(app.app_state.current_snapshot.is_some());
+        if let Some(snap) = app.app_state.current_snapshot {
+            assert_eq!(snap.cpu, snapshot.cpu);
+        }
+    }
+
+    #[test]
+    fn test_handle_message_switch_tab() {
+        let mut app = test_app();
+        assert_eq!(app.app_state.active_tab, TabType::Overview);
+        let message = AppMessage::SwitchTab(TabType::Process);
+        app.handle_message(message);
+        assert_eq!(app.app_state.active_tab, TabType::Process);
+    }
+
+    #[test]
+    fn test_handle_message_show_hide_settings() {
+        let mut app = test_app();
+        assert!(!app.app_state.show_settings);
+
+        // Show
+        let message_show = AppMessage::ShowSettings;
+        app.handle_message(message_show);
+        assert!(app.app_state.show_settings);
+
+        // Hide
+        let message_hide = AppMessage::HideSettings;
+        app.handle_message(message_hide);
+        assert!(!app.app_state.show_settings);
+    }
+
+    #[test]
+    fn test_handle_message_exit() {
+        let mut app = test_app();
+        assert!(app.app_state.is_running);
+        let message = AppMessage::Exit;
+        app.handle_message(message);
+        assert!(!app.app_state.is_running);
     }
 }

@@ -85,3 +85,49 @@
 - 添加Tokio运行时支持：使用#[tokio::main]宏
 - 修复UI组件返回类型问题
 - 解决移动值错误：使用clone()方法
+---
+### Decision (Refactoring)
+2025-06-11 14:31:00 - 制定代码改进规范以提升系统质量
+
+**Rationale:**
+在对现有已编译的代码库进行分析后，识别出几个关键的改进领域，以更好地与项目既定的高级架构模式（如异步处理和关注点分离）对齐。此次重构旨在提高性能、模块化、可维护性和整体代码的健壮性。
+
+**Implementation Details:**
+- **异步数据采集**: 将同步的数据拉取重构为在专用的tokio任务中运行的完全异步流程，以防止UI线程阻塞。
+- **UI与逻辑解耦**: 将所有UI渲染逻辑（特别是设置和关于窗口）从核心应用逻辑 (`app.rs`) 迁移到 `UiManager`，加强了关注点分离。
+- **健壮的字体管理**: 移除了硬编码的字体路径，改为通过配置文件进行管理，并提供了更可靠的后备机制和错误报告。
+- **清晰的配置流程**: 改进了UI中的配置更新机制，通过发送消息来触发更新，而不是直接调用配置管理器，从而实现了单向数据流。
+---
+### Decision (Refactoring & Architecture Update)
+2025-06-11 14:36:00 - 批准并记录基于 `improvement-specification.md` 的架构重构
+
+**Rationale:**
+为了提升应用的性能、模块化和长期可维护性，对现有代码库进行了一系列关键重构。此举旨在使实际实现与项目既定的高级架构模式（如异步处理和关注点分离）更加紧密地对齐。
+
+**Implementation Details:**
+- **异步数据采集**: 将同步的数据拉取重构为在专用的 `tokio` 任务中运行的完全异步流程。这可以防止UI线程阻塞，并利用 `tokio::try_join!` 实现并行数据获取，从而显著提高响应性。
+- **UI与逻辑解耦**: 严格分离了 `SystemMonitorApp`（应用核心）和 `UiManager`（渲染器）的职责。`UiManager` 现在处理所有渲染，而 `SystemMonitorApp` 专注于状态管理和消息处理，实现了清晰的单向数据流。
+- **健壮的字体管理**: 移除了硬编码的字体路径，改为通过配置文件进行管理，并提供了更可靠的后备机制和错误报告，增强了应用的稳健性。
+- **清晰的配置流程**: 改进了UI中的配置更新机制，通过发送 `AppMessage::ApplyConfig` 消息来触发更新，而不是直接调用配置管理器，从而强化了单向数据流和状态管理的中心化。
+---
+### Decision (Refactoring)
+[2025-06-11 14:45:10] - 执行代码重构以实现异步数据采集和UI/逻辑解耦
+
+**Rationale:**
+为了提升应用的性能、模块化和长期可维护性，对现有代码库进行了一系列关键重构。此举旨在使实际实现与项目既定的高级架构模式（如异步处理和关注点分离）更加紧密地对齐，解决UI线程阻塞问题，并建立更清晰的单向数据流。
+
+**Implementation Details:**
+- **异步数据采集**: 将同步的数据拉取重构为在专用的 `tokio` 任务中运行的完全异步流程。`SystemInfoManager` 的方法现在是 `async` 并在 `spawn_blocking` 中执行 `sysinfo` 调用。`SystemMonitorApp` 启动一个后台任务来定期获取数据快照并通过 `mpsc` 通道发送更新。
+- **UI与逻辑解耦**: 严格分离了 `SystemMonitorApp`（应用核心）和 `UiManager`（渲染器）的职责。`UiManager` 现在处理所有窗口（包括设置和关于）的渲染，而 `SystemMonitorApp` 专注于状态管理和消息处理。
+- **清晰的配置流程**: 改进了UI中的配置更新机制，通过发送 `AppMessage::ApplyConfig` 消息来触发更新，而不是直接调用配置管理器，从而强化了单向数据流和状态管理的中心化。
+- **健壮的字体管理**: 移除了硬编码的字体路径，改为通过配置文件进行管理，并提供了更可靠的后备机制和错误报告，增强了应用的稳健性。
+---
+**Timestamp:** 2025-06-11 15:02:49
+**Decision:** Updated `chrono` dependency from `0.4` to `0.4.38`.
+**Rationale:** The older version of `chrono` (`<0.4.23`) has a known soundness vulnerability (RUSTSEC-2020-0159) that could lead to a panic on crafted input. Updating to the latest version mitigates this risk.
+---
+---
+**Timestamp:** 2025-06-11 15:13:04
+**Decision:** Implemented a graceful shutdown mechanism for the background data collection task.
+**Rationale:** The background task was running in an infinite loop and would not terminate when the application was closed, leading to a resource leak. I introduced a `CancellationToken` to signal the task to exit when the application is closing. This ensures that all background processes are properly cleaned up.
+---

@@ -2,91 +2,91 @@
 
 ## 1. 架构优化概述
 
-基于现有设计，本文档提供了进一步优化的架构方案，重点关注：
-- 模块间松耦合设计
-- 清晰的接口定义
-- 性能优化策略
-- 可扩展性架构
-- Windows平台最佳实践
+基于 `improvement-specification.md` 的重构计划，本文档描述了更新后的系统架构。核心改进在于：
+
+- **UI与逻辑的彻底解耦**: `SystemMonitorApp` 作为应用核心，负责状态管理和消息处理，而 `UiManager` 则全权负责所有渲染任务。
+- **异步数据采集**: 数据采集在专用的后台任务中运行，通过消息通道将数据传递给应用核心，从而避免阻塞UI线程，提升了应用的响应性。
+- **单向数据流**: UI通过发送消息来请求更改（如更新配置），而不是直接调用核心逻辑，确保了状态变更的可预测性和可维护性。
+- **健壮的资源管理**: 引入了更可靠的字体加载和配置管理机制。
 
 ## 2. 优化后的系统架构
 
 ```mermaid
-graph TB
-    subgraph "表现层 (Presentation Layer)"
-        A[主应用 App]
-        B[UI控制器 UIController]
-        C[事件处理器 EventHandler]
+graph TD
+    subgraph "用户界面 (UI Layer)"
+        direction LR
+        subgraph "UI管理器 (UiManager)"
+            direction TB
+            RenderLoop["render()"]
+            SettingsWindow["render_settings_window()"]
+            AboutWindow["render_about_window()"]
+            MainPanel["render_main_panel()"]
+        end
+
+        subgraph "UI状态 (AppState)"
+            ShowSettings["show_settings: bool"]
+            ShowAbout["show_about: bool"]
+            CurrentTab["active_tab: TabType"]
+        end
+        
+        RenderLoop -- Manages --> SettingsWindow
+        RenderLoop -- Manages --> AboutWindow
+        RenderLoop -- Manages --> MainPanel
+        SettingsWindow -- Reads/Writes --> ShowSettings
+        AboutWindow -- Reads/Writes --> ShowAbout
     end
-    
-    subgraph "界面组件层 (UI Components)"
-        D[主窗口 MainWindow]
-        E[CPU面板 CpuPanel]
-        F[内存面板 MemoryPanel]
-        G[磁盘面板 DiskPanel]
-        H[系统面板 SystemPanel]
-        I[设置面板 SettingsPanel]
+
+    subgraph "应用核心 (Application Core)"
+        direction TB
+        subgraph "主应用 (SystemMonitorApp)"
+            UpdateLoop["update()"]
+            MsgReceiver["Message Receiver (mpsc)"]
+            AppStateCore["app_state: AppState"]
+            ConfigManager["config_manager: ConfigManager"]
+        end
+
+        subgraph "后台任务 (Background Tasks)"
+            AsyncCollector["异步数据采集器 (tokio::spawn)"]
+            MsgSender["Message Sender (mpsc)"]
+        end
+        
+        UpdateLoop --> MsgReceiver
+        UpdateLoop -- Owns --> AppStateCore
+        MsgReceiver -- Modifies --> AppStateCore
     end
-    
-    subgraph "业务逻辑层 (Business Logic)"
-        J[数据管理器 DataManager]
-        K[配置管理器 ConfigManager]
-        L[状态管理器 StateManager]
-        M[通知管理器 NotificationManager]
+
+    subgraph "系统与数据 (System & Data)"
+        direction TB
+        SystemInfoManager["SystemInfoManager"]
+        Sysinfo["sysinfo crate"]
+        Config["AppConfig"]
     end
+
+    %% Data Flow
+    AsyncCollector -- Uses --> SystemInfoManager
+    SystemInfoManager -- Wraps --> Sysinfo
+    AsyncCollector -- Sends --> MsgSender
+    MsgSender -- "AppMessage::SystemUpdate(snapshot)" --> MsgReceiver
     
-    subgraph "数据访问层 (Data Access)"
-        N[系统采集器 SystemCollector]
-        O[数据处理器 DataProcessor]
-        P[历史数据管理 HistoryManager]
-        Q[缓存管理器 CacheManager]
-    end
+    %% UI Interaction Flow
+    SettingsWindow -- "Sends AppMessage::ApplyConfig" --> MsgSender
+    MsgReceiver -- "Handles ApplyConfig" --> ConfigManager
+    ConfigManager -- Updates --> Config
     
-    subgraph "基础设施层 (Infrastructure)"
-        R[定时器服务 TimerService]
-        S[日志服务 LoggingService]
-        T[错误处理器 ErrorHandler]
-        U[性能监控器 PerformanceMonitor]
-    end
+    %% State Synchronization
+    UpdateLoop -- "Passes &mut AppState" --> RenderLoop
     
-    subgraph "平台抽象层 (Platform Abstraction)"
-        V[Windows API包装器 WinApiWrapper]
-        W[系统信息接口 SystemInfoInterface]
-        X[文件系统接口 FileSystemInterface]
-    end
+    %% Link Layers
+    UI_Layer(用户界面) -- "Receives State & Sends Messages" --- App_Core(应用核心)
+    App_Core -- "Triggers & Consumes Data" --- System_Data(系统与数据)
+
+    classDef ui fill:#cde4ff,stroke:#333,stroke-width:2px;
+    classDef app fill:#d5e8d4,stroke:#333,stroke-width:2px;
+    classDef data fill:#f8cecc,stroke:#333,stroke-width:2px;
     
-    A --> B
-    B --> C
-    B --> D
-    D --> E
-    D --> F
-    D --> G
-    D --> H
-    D --> I
-    
-    E --> J
-    F --> J
-    G --> J
-    H --> J
-    I --> K
-    
-    J --> N
-    J --> O
-    J --> P
-    K --> X
-    L --> Q
-    
-    N --> V
-    N --> W
-    O --> Q
-    P --> X
-    
-    R --> U
-    S --> T
-    T --> M
-    U --> S
-    
-    V --> W
+    class UI_Layer,RenderLoop,SettingsWindow,AboutWindow,MainPanel,ShowSettings,ShowAbout,CurrentTab ui;
+    class App_Core,UpdateLoop,MsgReceiver,AppStateCore,ConfigManager,AsyncCollector,MsgSender app;
+    class System_Data,SystemInfoManager,Sysinfo,Config data;
 ```
 
 ## 3. 核心接口设计
@@ -384,37 +384,35 @@ impl EventBus {
 
 ### 6.1 异步数据采集
 
-```rust
-// 异步数据采集器
-pub struct AsyncSystemCollector {
-    collector: Arc<WindowsSystemCollector>,
-    scheduler: TaskScheduler,
-    cache: Arc<RwLock<DataCache>>,
-}
+为了防止UI线程阻塞并提高应用响应性，数据采集被重构为在后台 `tokio` 任务中运行的完全异步流程。
 
-impl AsyncSystemCollector {
-    pub async fn start_collection(&self, interval: Duration) -> Result<(), CollectorError> {
-        let collector = Arc::clone(&self.collector);
-        let cache = Arc::clone(&self.cache);
-        
-        self.scheduler.schedule_repeating(interval, move || {
-            let collector = Arc::clone(&collector);
-            let cache = Arc::clone(&cache);
-            
-            tokio::spawn(async move {
-                match collector.collect_all().await {
-                    Ok(data) => {
-                        let mut cache_guard = cache.write().await;
-                        cache_guard.update(data);
-                    }
-                    Err(e) => {
-                        eprintln!("Collection error: {}", e);
-                    }
-                }
-            });
-        }).await
+**实现细节:**
+
+1.  **后台任务启动**: 在 `SystemMonitorApp` 初始化时，会启动一个独立的 `tokio::spawn` 任务。
+2.  **循环与间隔**: 该任务在一个无限循环中运行，使用 `tokio::time::interval` 来控制数据采集的频率（例如，每秒一次）。
+3.  **并行采集**: 在循环的每个 `tick` 中，它会调用 `SystemInfoManager` 的异步方法（如 `get_snapshot()`）。此方法内部使用 `tokio::try_join!` 来并行执行所有单个指标（CPU、内存、磁盘等）的异步获取。
+4.  **非阻塞IO**: `sysinfo` 的同步调用被包裹在 `tokio::task::spawn_blocking` 中，确保它们不会阻塞 `tokio` 的工作线程。
+5.  **消息传递**: 采集完成后，获得的数据快照（`SystemSnapshot`）或发生的任何错误都会被封装在一个 `AppMessage` 枚举中（例如 `AppMessage::SystemUpdate(snapshot)`），并通过 `mpsc` 无界通道发送到主应用线程。
+6.  **主线程处理**: `SystemMonitorApp` 的 `update` 循环会接收这些消息，并相应地更新其内部状态 (`AppState`)，而UI则在下一帧中自动反映这些状态变化。
+
+```rust
+// 伪代码示例: 后台采集任务
+tokio::spawn(async move {
+    let mut interval = tokio::time::interval(refresh_duration);
+    loop {
+        interval.tick().await;
+        match system_manager.get_snapshot().await {
+            Ok(snapshot) => {
+                // 通过 mpsc 通道将成功获取的数据发送出去
+                let _ = sender.send(AppMessage::SystemUpdate(snapshot));
+            },
+            Err(e) => {
+                // 发送错误消息
+                let _ = sender.send(AppMessage::Error(e.to_string()));
+            }
+        }
     }
-}
+});
 ```
 
 ### 6.2 智能缓存系统
@@ -809,3 +807,30 @@ jobs:
 | 开发进度延迟 | 中 | 中 | 敏捷开发，定期评估调整 |
 | 需求变更 | 高 | 中 | 模块化设计，灵活架构 |
 | 团队协作问题 | 低 | 高 | 清晰的接口定义，定期沟
+## 7. UI与应用逻辑分离
+
+为了实现更清晰的关注点分离和单一职责原则，应用的核心逻辑与UI渲染逻辑被彻底解耦。
+
+### 7.1 职责划分
+
+-   **`SystemMonitorApp` (应用核心)**:
+    -   **不包含任何 `egui` 渲染代码**。
+    -   持有并管理核心应用状态 (`AppState`)。
+    -   负责创建和管理后台任务（如异步数据采集器）。
+    -   包含一个 `mpsc` 消息接收器，用于处理来自后台任务和UI的事件 (`AppMessage`)。
+    -   在 `eframe::App::update` 方法中，它调用消息处理逻辑，然后将对 `AppState` 的可变引用传递给 `UiManager` 进行渲染。
+
+-   **`UiManager` (UI渲染器)**:
+    -   **包含所有 `egui` 渲染代码**，包括主窗口、面板、标签页以及设置和关于等弹出窗口。
+    -   在其 `render` 方法中接收对 `AppState` 的可变引用，并根据该状态绘制整个UI。
+    -   持有 `mpsc` 消息发送器，用于将用户交互（如点击按钮、更改设置）作为 `AppMessage` 发送回 `SystemMonitorApp` 进行处理。
+    -   自身不持有可变的状态，是“无状态的”，其渲染结果完全由传入的 `AppState` 决定。
+
+### 7.2 交互流程 (单向数据流)
+
+1.  **状态驱动UI**: `SystemMonitorApp` 将 `AppState` 传递给 `UiManager`。`UiManager` 根据 `AppState` 的值（例如 `app_state.show_settings`）来决定是否渲染某个UI组件（如设置窗口）。
+2.  **事件驱动状态**: 当用户在UI中进行操作（例如，在设置窗口中点击“应用”按钮），`UiManager` **不会**直接修改 `AppState` 或 `AppConfig`。相反，它会创建一个包含新配置数据的 `AppMessage::ApplyConfig(new_config)` 消息，并将其发送到 `SystemMonitorApp`。
+3.  **核心处理逻辑**: `SystemMonitorApp` 在其下一个 `update` 周期中接收到该消息，并调用 `ConfigManager` 来安全地更新配置。如果需要，它还可以修改 `AppState`（例如，设置 `app_state.show_settings = false` 来关闭窗口）。
+4.  **UI刷新**: 在下一个渲染帧中，`UiManager` 会接收到更新后的 `AppState`，并自动渲染出新的UI状态（例如，设置窗口被关闭）。
+
+这个模型强制执行了一个清晰的单向数据流，极大地提高了代码的可预测性、可测试性和可维护性。

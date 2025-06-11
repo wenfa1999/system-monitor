@@ -87,7 +87,7 @@ impl MetricsCalculator {
         
         let average = sum / count;
         let mut sorted_values = values.clone();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less));
         
         let min = sorted_values[0];
         let max = sorted_values[sorted_values.len() - 1];
@@ -126,7 +126,7 @@ impl MetricsCalculator {
         
         let average = sum / count;
         let mut sorted_values = values.clone();
-        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less));
         
         let min = sorted_values[0];
         let max = sorted_values[sorted_values.len() - 1];
@@ -220,7 +220,11 @@ impl MetricsCalculator {
             return 0.0;
         }
 
-        let base_time = history.front().unwrap().0;
+        let base_time = if let Some(front) = history.front() {
+            front.0
+        } else {
+            return 0.0; // or handle error appropriately
+        };
         let points: Vec<(f64, f64)> = history.iter()
             .map(|(timestamp, value)| {
                 let x = timestamp.duration_since(base_time).as_secs_f64();
@@ -419,8 +423,9 @@ mod tests {
     fn test_moving_average() {
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let avg = crate::utils::MathUtils::moving_average(&values, 3);
-        assert_eq!(avg.len(), 5);
-        assert_eq!(avg[2], 2.0); // (1+2+3)/3
-        assert_eq!(avg[4], 4.0); // (3+4+5)/3
+        assert_eq!(avg.len(), 3);
+        assert_eq!(avg[0], 2.0); // (1+2+3)/3
+        assert_eq!(avg[1], 3.0); // (2+3+4)/3
+        assert_eq!(avg[2], 4.0); // (3+4+5)/3
     }
 }

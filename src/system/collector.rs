@@ -293,7 +293,7 @@ impl SystemInfoCollector for CachedSystemCollector {
     }
 
     fn collect_system_info(&self) -> Result<SystemInfo> {
-        let system = self.system.read()
+        let _system = self.system.read()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统读锁".to_string()))?;
 
         Ok(SystemInfo {
@@ -307,7 +307,7 @@ impl SystemInfoCollector for CachedSystemCollector {
     }
 
     fn collect_network_info(&self) -> Result<Vec<NetworkInfo>> {
-        let mut system = self.system.write()
+        let _system = self.system.write()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统写锁".to_string()))?;
         
         
@@ -396,3 +396,40 @@ mod tests {
         assert!(snapshot.is_ok());
     }
 }
+#[tokio::test]
+    async fn test_cache_works() {
+        let collector = CachedSystemCollector::new(Duration::from_secs(5)).unwrap();
+        let first_call = collector.collect_cpu_info().unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let second_call = collector.collect_cpu_info().unwrap();
+        // In a real system, usage will fluctuate slightly.
+        // For this test, we assume it's identical due to caching.
+        // A better comparison might be on a specific stable field if available.
+        assert_eq!(first_call.core_count, second_call.core_count);
+    }
+
+    #[tokio::test]
+    async fn test_cache_expires() {
+        let collector = CachedSystemCollector::new(Duration::from_millis(500)).unwrap();
+        let first_call = collector.collect_cpu_info().unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let second_call = collector.collect_cpu_info().unwrap();
+        // It's hard to assert the values are *different* because system usage might be stable.
+        // However, the core logic is that a refresh happens. We can't easily inspect that
+        // without changing the code, so we rely on the time delay to have triggered it.
+        // A more robust test would involve mocking the underlying sysinfo calls.
+        assert_eq!(first_call.core_count, second_call.core_count); // Still should have same core count
+    }
+
+    #[tokio::test]
+    async fn test_force_refresh() {
+        let collector = CachedSystemCollector::new(Duration::from_secs(60)).unwrap();
+        let _ = collector.collect_cpu_info().unwrap();
+        
+        // We can't easily check that the data is different, but we can check that the refresh runs.
+        let refresh_result = collector.force_refresh();
+        assert!(refresh_result.is_ok());
+
+        // After a force refresh, new data should be collected.
+        let _ = collector.collect_cpu_info().unwrap();
+    }

@@ -9,6 +9,10 @@ repository = "https://github.com/your-org/system-monitor"
 keywords = ["system", "monitor", "gui", "performance", "windows"]
 categories = ["gui", "system-tools"]
 
+[lib]
+name = "system_monitor"
+path = "src/lib.rs"
+
 [dependencies]
 # GUI Framework
 egui = "0.31.1"
@@ -24,6 +28,7 @@ sysinfo = "0.35.2"
 
 # Async Runtime
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7.15"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -38,7 +43,7 @@ log = "0.4.27"
 env_logger = "0.11.8"
 
 # Time and Date
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.41", features = ["serde"] }
 
 # Configuration
 config = "0.15.11"

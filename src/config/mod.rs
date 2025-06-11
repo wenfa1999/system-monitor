@@ -65,6 +65,8 @@ pub struct UiConfig {
     pub chart_colors: ChartColors,
     /// 默认标签页
     pub default_tab: String,
+    /// 自定义字体路径
+    pub font_path: Option<String>,
 }
 
 /// 主题配置
@@ -135,6 +137,7 @@ impl Default for UiConfig {
             show_grid: true,
             chart_colors: ChartColors::default(),
             default_tab: "overview".to_string(),
+            font_path: Some("assets/fonts/NotoSansSC-Regular.ttf".to_string()),
         }
     }
 }

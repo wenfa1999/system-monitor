@@ -94,15 +94,17 @@ impl LineChart {
         // 绘制填充区域
         if let Some(fill_color) = self.fill_color {
             if points.len() > 1 {
-                let mut fill_points = points.clone();
-                fill_points.push(egui::Pos2::new(points.last().unwrap().x, rect.bottom()));
-                fill_points.push(egui::Pos2::new(points.first().unwrap().x, rect.bottom()));
-                
-                painter.add(egui::Shape::convex_polygon(
-                    fill_points,
-                    fill_color,
-                    egui::Stroke::NONE,
-                ));
+                if let (Some(first), Some(last)) = (points.first(), points.last()) {
+                    let mut fill_points = points.clone();
+                    fill_points.push(egui::Pos2::new(last.x, rect.bottom()));
+                    fill_points.push(egui::Pos2::new(first.x, rect.bottom()));
+
+                    painter.add(egui::Shape::convex_polygon(
+                        fill_points,
+                        fill_color,
+                        egui::Stroke::NONE,
+                    ));
+                }
             }
         }
 

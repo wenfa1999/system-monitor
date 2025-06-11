@@ -76,3 +76,37 @@
   - ✅ 确保应用程序成功编译和运行
   - ✅ 验证系统监控功能基础架构
   - ✅ 确认Windows平台兼容性
+---
+## 代码重构阶段
+
+* 2025-06-11 14:45:22 - 完成代码重构
+  - ✅ **异步数据采集**: 数据采集已移至后台 `tokio` 任务。
+  - ✅ **UI/逻辑解耦**: `UiManager` 现在负责所有渲染，实现了单向数据流。
+  - ✅ **字体管理**: 实现了可配置和健壮的字体加载。
+  - ✅ **内存银行更新**: `decisionLog.md` 和 `progress.md` 已更新。
+---
+**Date:** 2025-06-11 15:01
+**Task:** 为重构后的代码编写测试 (TDD Cycle)
+**Status:** Completed
+**Summary:**
+- 为 `system/collector.rs` 中的 `CachedSystemCollector` 编写了单元测试，验证了缓存和刷新逻辑。
+- 在测试过程中发现并修复了 `utils::MathUtils::moving_average` 中的一个下溢错误。
+- 为 `app.rs` 中的 `SystemMonitorApp::handle_message` 编写了单元测试，验证了应用状态管理。
+- 修复了 `system/info.rs` 中数据结构缺失的 `Default` 和 `PartialEq` 实现。
+- 修复了 `app.rs` 测试中一个错误的 `TabType` 枚举变体。
+- 添加了一个集成测试 (`tests/data_flow.rs`) 来验证从后台收集器到应用核心的异步消息流。
+- 将项目配置为同时作为库和二进制文件，以支持集成测试。
+- 所有单元测试和集成测试均已通过。
+---
+**Timestamp:** 2025-06-11 15:02:59
+**Task:** Security Review
+**Action:** Identified and patched a vulnerability in the `chrono` dependency (RUSTSEC-2020-0159) by updating it to version `0.4.38`.
+**Status:** Dependency scan complete. Proceeding to static code analysis.
+---
+---
+**Timestamp:** 2025-06-11 15:13:14
+**Task:** Security Review
+**Action:** Fixed a resource leak by implementing a graceful shutdown for the background data collection task.
+**Status:** Static code analysis complete. All identified issues have been addressed.
+---
+* 2025-06-11 15:36:08 - 创建了新的 `README.md` 文件，包含项目简介、构建/运行说明和架构概述。

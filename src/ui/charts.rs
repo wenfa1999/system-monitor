@@ -2,7 +2,7 @@
 //! 
 //! 提供各种数据可视化图表组件。
 
-use eframe::egui;
+use eframe::{egui, epaint::StrokeKind};
 use std::collections::VecDeque;
 
 /// 简单的线性图表组件
@@ -64,7 +64,7 @@ impl LineChart {
 
         if self.data.is_empty() {
             // 绘制空图表
-            painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+            painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()), StrokeKind::Middle);
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -77,7 +77,7 @@ impl LineChart {
 
         // 绘制背景
         painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
+        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, ui.visuals().weak_text_color()), StrokeKind::Middle);
 
         // 计算点的位置
         let points: Vec<egui::Pos2> = self.data
@@ -342,7 +342,7 @@ impl BarChart {
 
             // 绘制柱子
             painter.rect_filled(bar_rect, 2.0, self.bar_color);
-            painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, ui.visuals().text_color()));
+            painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, ui.visuals().text_color()), StrokeKind::Middle);
 
             // 绘制标签
             painter.text(

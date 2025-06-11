@@ -155,7 +155,7 @@ impl ProcessTabRenderer {
 }
 
 impl TabRenderer for ProcessTabRenderer {
-    fn render(&mut self, ui: &mut egui::Ui, system_data: Option<&SystemSnapshot>) {
+    fn render(&mut self, ui: &mut egui::Ui, _system_data: Option<&SystemSnapshot>) {
         ui.heading("进程信息");
         ui.separator();
         

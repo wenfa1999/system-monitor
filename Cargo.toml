@@ -11,15 +11,16 @@ categories = ["gui", "system-tools"]
 
 [dependencies]
 # GUI Framework
-egui = "0.24"
-eframe = { version = "0.24", default-features = false, features = [
+egui = "0.31.1"
+eframe = { version = "0.31", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
 ] }
+epaint = "0.31.1"
 
 # System Information
-sysinfo = "0.29"
+sysinfo = "0.35.2"
 
 # Async Runtime
 tokio = { version = "1.0", features = ["full"] }
@@ -30,18 +31,18 @@ serde_json = "1.0"
 
 # Error Handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0.12"
 
 # Logging
-log = "0.4"
-env_logger = "0.10"
+log = "0.4.27"
+env_logger = "0.11.8"
 
 # Time and Date
 chrono = { version = "0.4", features = ["serde"] }
 
 # Configuration
-config = "0.13"
-dirs = "5.0"
+config = "0.15.11"
+dirs = "6.0.0"
 
 # Collections
 smallvec = "1.11"
@@ -59,7 +60,7 @@ winapi = { version = "0.3", features = [
 ] }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.6.0"
 
 [profile.release]
 opt-level = 3

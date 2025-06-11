@@ -2,7 +2,6 @@
 //! 
 //! 提供系统性能指标的计算、分析和历史数据管理功能。
 
-use crate::system::info::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -51,7 +50,7 @@ impl MetricsCalculator {
 
     /// 清理过期数据
     fn cleanup_old_data<T>(&mut self, history: &mut VecDeque<(Instant, T)>) {
-        let cutoff_time = Instant::now() - self.history_duration;
+        let _cutoff_time = Instant::now() - self.history_duration;
         Self::cleanup_old_data_static(history, self.history_duration);
     }
 

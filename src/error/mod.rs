@@ -2,7 +2,6 @@
 //! 
 //! 定义了系统监控工具中使用的所有错误类型，提供统一的错误处理机制。
 
-use std::fmt;
 use thiserror::Error;
 
 /// 系统监控工具的主要错误类型
@@ -130,7 +129,7 @@ impl ErrorRecovery {
         Fut: std::future::Future<Output = Result<T>>,
     {
         let mut attempts = 0;
-        let max_attempts = 3;
+        let _max_attempts = 3;
 
         loop {
             match operation().await {

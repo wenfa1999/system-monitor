@@ -3,7 +3,7 @@
 //! 负责协调和管理所有UI组件的渲染和状态。
 
 use crate::config::AppConfig;
-use crate::error::{Result, SystemMonitorError};
+use crate::error::Result;
 use crate::system::SystemSnapshot;
 use crate::ui::{TabType, UiState, UiTheme, ColorScheme, MemoryTabRenderer, DiskTabRenderer, ProcessTabRenderer, NetworkTabRenderer};
 use eframe::egui;

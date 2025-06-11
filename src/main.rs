@@ -53,17 +53,14 @@ async fn main() -> Result<(), SystemMonitorError> {
     let result = eframe::run_native(
         "系统监控工具",
         options,
-        Box::new(|cc| {
+        Box::new(|cc: &eframe::CreationContext| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
             // 设置自定义字体（支持中文）
             setup_custom_fonts(&cc.egui_ctx);
             
             // 创建应用程序实例
             match SystemMonitorApp::new(cc, Arc::new(config)) {
-                Ok(app) => Box::new(app),
-                Err(e) => {
-                    error!("创建应用程序失败: {}", e);
-                    std::process::exit(1);
-                }
+                Ok(app) => Ok(Box::new(app)),
+                Err(e) => Err(Box::new(e)),
             }
         }),
     );
@@ -126,7 +123,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
     };
 
     // 添加中文字体支持
-    fonts.font_data.insert("chinese_font".to_owned(), font_data);
+    fonts.font_data.insert("chinese_font".to_owned(), Arc::new(font_data));
 
     // 设置字体优先级 - 将中文字体放在最前面
     fonts

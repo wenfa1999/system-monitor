@@ -38,7 +38,7 @@ impl TimeUtils {
     /// 格式化时间戳为本地时间字符串
     pub fn format_timestamp(timestamp: u64) -> String {
         let datetime = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap_or_else(|| chrono::Utc::now());
+            .unwrap_or_else(chrono::Utc::now);
         let local_datetime = datetime.with_timezone(&chrono::Local);
         local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()
     }
@@ -267,7 +267,7 @@ pub struct ValidationUtils;
 impl ValidationUtils {
     /// 验证端口号
     pub fn is_valid_port(port: u16) -> bool {
-        port > 0 && port <= 65535
+        port > 0
     }
 
     /// 验证IP地址格式（简单验证）

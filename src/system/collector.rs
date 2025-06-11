@@ -4,8 +4,7 @@
 
 use crate::error::{Result, SystemMonitorError};
 use crate::system::info::*;
-use sysinfo::{System, SystemExt, CpuExt, DiskExt, ProcessExt, NetworkExt, NetworksExt, PidExt};
-use std::collections::HashMap;
+use sysinfo::{System, ProcessRefreshKind, ProcessesToUpdate, Disks, Networks};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -140,7 +139,7 @@ impl CachedSystemCollector {
         let system = self.system.read()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统读锁".to_string()))?;
         
-        let global_cpu = system.global_cpu_info();
+        let global_cpu = system.global_cpu_usage();
         let cores: Vec<CpuCoreInfo> = system.cpus().iter().map(|cpu| CpuCoreInfo {
             name: cpu.name().to_string(),
             usage: cpu.cpu_usage(),
@@ -148,7 +147,7 @@ impl CachedSystemCollector {
         }).collect();
 
         let cpu_info = CpuInfo {
-            global_usage: global_cpu.cpu_usage(),
+            global_usage: global_cpu,
             cores,
             core_count: system.cpus().len(),
         };
@@ -216,7 +215,7 @@ impl CachedSystemCollector {
         let system = self.system.read()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统读锁".to_string()))?;
         
-        let disks: Vec<DiskInfo> = system.disks().iter().map(|disk| {
+        let disks: Vec<DiskInfo> = Disks::new_with_refreshed_list().iter().map(|disk| {
             let total = disk.total_space();
             let available = disk.available_space();
             let used = total - available;
@@ -224,7 +223,7 @@ impl CachedSystemCollector {
             DiskInfo {
                 name: disk.name().to_string_lossy().to_string(),
                 mount_point: disk.mount_point().to_string_lossy().to_string(),
-                file_system: String::from_utf8_lossy(disk.file_system()).to_string(),
+                file_system: String::from_utf8_lossy(disk.file_system().as_encoded_bytes()).to_string(),
                 total_space: total,
                 available_space: available,
                 used_space: used,
@@ -275,12 +274,12 @@ impl SystemInfoCollector for CachedSystemCollector {
         let mut system = self.system.write()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统写锁".to_string()))?;
         
-        system.refresh_processes();
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::everything());
         
         let mut processes: Vec<ProcessInfo> = system.processes().iter().map(|(pid, process)| {
             ProcessInfo {
                 pid: pid.as_u32(),
-                name: process.name().to_string(),
+                name: process.name().to_string_lossy().into_owned(),
                 cpu_usage: process.cpu_usage(),
                 memory_usage: process.memory(),
                 status: format!("{:?}", process.status()),
@@ -298,12 +297,12 @@ impl SystemInfoCollector for CachedSystemCollector {
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统读锁".to_string()))?;
 
         Ok(SystemInfo {
-            os_name: system.name().unwrap_or_else(|| "Unknown".to_string()),
-            os_version: system.os_version().unwrap_or_else(|| "Unknown".to_string()),
-            kernel_version: system.kernel_version().unwrap_or_else(|| "Unknown".to_string()),
-            hostname: system.host_name().unwrap_or_else(|| "Unknown".to_string()),
-            uptime: system.uptime(),
-            boot_time: system.boot_time(),
+            os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
+            os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
+            kernel_version: System::kernel_version().unwrap_or_else(|| "Unknown".to_string()),
+            hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
+            uptime: System::uptime(),
+            boot_time: System::boot_time(),
         })
     }
 
@@ -311,10 +310,8 @@ impl SystemInfoCollector for CachedSystemCollector {
         let mut system = self.system.write()
             .map_err(|_| SystemMonitorError::SystemInfo("无法获取系统写锁".to_string()))?;
         
-        system.refresh_networks_list();
-        system.refresh_networks();
         
-        let networks: Vec<NetworkInfo> = system.networks().iter().map(|(name, network)| {
+        let networks: Vec<NetworkInfo> = Networks::new_with_refreshed_list().iter().map(|(name, network)| {
             NetworkInfo {
                 name: name.clone(),
                 bytes_received: network.received(),

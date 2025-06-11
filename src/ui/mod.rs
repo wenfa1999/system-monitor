@@ -9,14 +9,8 @@ pub mod tabs;
 
 pub use manager::*;
 pub use components::*;
-pub use charts::*;
-pub use tabs::*;
 
-use crate::config::AppConfig;
-use crate::error::{Result, SystemMonitorError};
-use crate::system::SystemSnapshot;
 use eframe::egui;
-use std::sync::Arc;
 
 /// 标签页类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -246,10 +240,10 @@ impl UiUtils {
         title: &str,
         content: impl FnOnce(&mut egui::Ui) -> R,
     ) -> egui::InnerResponse<R> {
-        egui::Frame::none()
+        egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-            .rounding(4.0)
+            .corner_radius(4.0)
             .inner_margin(8.0)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
@@ -288,7 +282,7 @@ impl UiUtils {
     pub fn collapsing_section<R>(
         ui: &mut egui::Ui,
         title: &str,
-        default_open: bool,
+        _default_open: bool,
         content: impl FnOnce(&mut egui::Ui) -> R,
     ) -> Option<R> {
         ui.collapsing(title, |ui| content(ui))

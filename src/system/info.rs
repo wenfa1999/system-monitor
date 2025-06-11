@@ -159,7 +159,7 @@ impl SystemSnapshot {
             .map(|d| d.usage_percent as f32)
             .fold(0.0f32, |acc, x| acc.max(x)); // 使用最高的磁盘使用率
 
-        cpu_score * cpu_weight + memory_score * memory_weight + disk_score as f32 * disk_weight
+        cpu_score * cpu_weight + memory_score * memory_weight + disk_score * disk_weight
     }
 
     /// 获取系统健康状态
@@ -279,7 +279,7 @@ impl TimeFormatter {
     /// Unix时间戳转换为本地时间字符串
     pub fn timestamp_to_local_string(timestamp: u64) -> String {
         let datetime = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap_or_else(|| chrono::Utc::now());
+            .unwrap_or_else(chrono::Utc::now);
         let local_datetime = datetime.with_timezone(&chrono::Local);
         local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()
     }

@@ -8,6 +8,7 @@ use crate::error::{Result, SystemMonitorError};
 
 /// 应用程序配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AppConfig {
     /// 窗口配置
     pub window: WindowConfig,
@@ -100,16 +101,6 @@ pub struct PerformanceConfig {
     pub worker_threads: usize,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            window: WindowConfig::default(),
-            monitoring: MonitoringConfig::default(),
-            ui: UiConfig::default(),
-            performance: PerformanceConfig::default(),
-        }
-    }
-}
 
 impl Default for WindowConfig {
     fn default() -> Self {
@@ -306,12 +297,6 @@ impl ConfigManager {
 }
 
 // 添加num_cpus依赖到Cargo.toml中需要的功能
-#[cfg(not(feature = "num_cpus"))]
-mod num_cpus {
-    pub fn get() -> usize {
-        4 // 默认值
-    }
-}
 
 #[cfg(test)]
 mod tests {
